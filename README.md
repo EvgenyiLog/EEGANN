@@ -1,1 +1,1 @@
-# EEGANN
+# EEGML
