@@ -47,10 +47,12 @@ from keras.layers import Dense
 from keras.layers import RepeatVector
 from keras.layers import TimeDistributed
 
+import pywt
+from sklearn.pipeline import make_pipeline
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 
 
-#print(__doc__)
-#with numpy==1.19.5
 
 data_path = sample.data_path()
 
@@ -177,16 +179,17 @@ xg = raw_selection[1]
 yg = raw_selection[0].T
 
 
-
+#matched filter
 yc=scipy.fft.ifft(scipy.fft.fft(yb)*scipy.fft.fft(yg))
-print(yc.shape)
-#yc=np.resize(yc,yc.shape[0])
 
+
+#plot signal
 plt.figure('Хороший')
 lines=plt.plot(xg, yg)
 plt.legend(lines,name)
 plt.grid()
 
+#plot h matched
 plt.figure('Взаимокорреляционная функция')
 lines=plt.plot(yc)
 
@@ -194,111 +197,108 @@ plt.grid()
 
 
 print(epochs)
+#mathed filtration
 ycn=yc/10
 ycn=np.where(np.abs(ycn)!=1,ycn,0)
 yc1=10*ycn
-ydc=np.real(scipy.fft.ifft(scipy.fft.fft(yc1)/scipy.fft.fft(yg)))
-'''
-t=np.linspace(0,len(ydc)/fs,len(ydc))
-x_train=np.column_stack((ydc,t,t))
-#x_train=keras.utils.normalize(x_train) 
-# this is the size of our encoded representations
+ydc=np.real(scipy.fft.fftshift(scipy.fft.ifft(scipy.fft.fft(yc1)/scipy.fft.fft(yg))))
 
-encoding_dim = 3
+#input wavelet decompasition
+in1=ydc
+
+#wavelet decompasition using dwt
+CA11,CD11,CD10,CD9,CD8,CD7,CD6,CD5,CD4,CD3,CD2,CD1=pywt.wavedec(ydc,wavelet=pywt.Wavelet('db2'),level=11)
+
+#predict 10 level dwt decompasition coefficient detalisation
+CD10P=[]
+for i in range(1):
+    t=np.linspace(0,len(CD10[i,:])/fs,len(ydc))
+    ca11=np.resize(CD10,CD10.shape[0])
+    x_train=np.column_stack((ca11,t,t))
+    x_train=np.asarray(x_train)
+   
+
+    encoding_dim = 3
 
 
-input = Input(shape=(3,))
-encoded = Dense(encoding_dim, activation='relu')(input)
-decoded = Dense(3, activation='tanh')(encoded)
+    input = Input(shape=(3,))
+    encoded = Dense(encoding_dim, activation='relu')(input)
+    decoded = Dense(3, activation='relu')(encoded)
 
-# this model maps an input to its reconstruction
-autoencoder = Model(input, decoded)
-autoencoder.compile(optimizer='adadelta', loss='mse')
+    # this model maps an input to its reconstruction
+    autoencoder = Model(input, decoded)
+    autoencoder.compile(optimizer='adadelta', loss='mse')
 
-autoencoder.fit(x_train, x_train,epochs=500,batch_size=4)
+    autoencoder.fit(x_train, x_train,epochs=500,batch_size=4)
 
-ydcp,t1,t2=np.hsplit(autoencoder.predict(x_train), 3)
-#print(ydcp)
+    y,t1,t2=np.hsplit(autoencoder.predict(x_train), 3)
+    CD10P=np.append(CD10P,y)
+    
+    CD10P=np.vstack((CD10P,CD10P))
+    
+    CD10P=np.resize(CD10P,(CD10.shape[0],CD10.shape[1]))
 
-sequence = np.array(ydc[0:1000])
-# reshape input into [samples, timesteps, features]
-n_in = len(sequence)
-sequence = sequence.reshape((1, n_in, 1))
-# define model
-model = Sequential()
-model.add(LSTM(100, activation='relu', input_shape=(n_in,1)))
-model.add(RepeatVector(n_in))
-model.add(LSTM(100, activation='relu', return_sequences=True))
-model.add(TimeDistributed(Dense(1)))
-model.compile(optimizer='adam', loss='mse')
-# fit model
-model.fit(sequence, sequence, epochs=300, verbose=0)
-# connect the encoder LSTM as the output layer
-model = Model(inputs=model.inputs, outputs=model.layers[0].output)
-#plot_model(model, show_shapes=True, to_file='lstm_encoder.png')
-# get the feature vector for the input sequence
-yhat = model.predict(sequence)
-print(yhat.shape)
-yhat=yhat.reshape(yhat.shape[1])
-print(yhat.shape)
-#print(yhat)
-t1=xg[0:1000]
-plt.figure('Prediction')
-plt.plot(t1,yhat)
-plt.grid()
-'''
+#recover signal
+out11=pywt.idwt(CA11,CD11,wavelet=pywt.Wavelet('db2'))
+out10=pywt.idwt(CA11,CD10P,wavelet=pywt.Wavelet('db2'))
+out9=pywt.idwt(CA11,CD9,wavelet=pywt.Wavelet('db2'))
+out8=pywt.idwt(CA11,CD8,wavelet=pywt.Wavelet('db2'))
+out7=pywt.idwt(CA11,CD7,wavelet=pywt.Wavelet('db2'))
+out6=pywt.idwt(CA11,CD6,wavelet=pywt.Wavelet('db2'))
+out5=pywt.idwt(CA11,CD5,wavelet=pywt.Wavelet('db2'))
+out4=pywt.idwt(CA11,CD4,wavelet=pywt.Wavelet('db2'))
+out3=pywt.idwt(CA11,CD3,wavelet=pywt.Wavelet('db2'))
+out20=pywt.idwt(CA11,CD2,wavelet=pywt.Wavelet('db2'))
+out1=pywt.idwt(CA11,CD1,wavelet=pywt.Wavelet('db2'))
 
-seq_in = np.array(ydc[0:100])
-in1=seq_in
-print(in1.shape)
-# reshape input into [samples, timesteps, features]
-n_in = len(seq_in)
-seq_in = seq_in.reshape((1, n_in, 1))
-# prepare output sequence
-seq_out = seq_in[:, 1:, :]
-n_out = n_in - 1
-# define encoder
-visible = Input(shape=(n_in,1))
-encoder = LSTM(100, activation='elu')(visible)
-# define reconstruct decoder
-decoder1 = RepeatVector(n_in)(encoder)
-decoder1 = LSTM(100, activation='relu', return_sequences=True)(decoder1)
-decoder1 = TimeDistributed(Dense(1))(decoder1)
-# define predict decoder
-decoder2 = RepeatVector(n_out)(encoder)
-decoder2 = LSTM(100, activation='selu', return_sequences=True)(decoder2)
-decoder2 = TimeDistributed(Dense(1))(decoder2)
-# tie it together
-model = Model(inputs=visible, outputs=[decoder1, decoder2])
-model.compile(optimizer='Adam', loss='mse')
-model.summary()
-#plot_model(model, show_shapes=True, to_file='composite_lstm_autoencoder.png')
-# fit model
-model.fit(seq_in, [seq_in,seq_out], epochs=300, verbose=0)
-# demonstrate prediction
-yhat = model.predict(seq_in, verbose=0)
-out1=np.asarray(yhat[0])
-out1=out1.reshape(in1.shape[0])
-in1=in1.reshape(in1.shape[0])
-t1=xg[0:100]
-plt.figure('Prediction')
-plt.plot(t1,out1)
+#filtration 10 level dwt decompasition using polinomial regression with Ridge regularization
+out2end=np.mean(np.add(out11,out10),axis=1)
+t2=np.linspace(0,len(out2end)/fs,len(out2end))
+X = t2[:, np.newaxis]
+X_plot = t2[:, np.newaxis]
+model = make_pipeline(PolynomialFeatures(20), Ridge())
+out2end=out2end-np.mean(out2end)
+model.fit(X,out2end)
+out2end1=model.predict(X_plot)
+#recover signal
+out2=np.add(out2end1,np.mean(out9,axis=1))
+out2=np.add(out2,np.mean(out8,axis=1))
+out2=np.add(out2,np.mean(out7,axis=1))
+out2=np.add(out2,np.mean(out6,axis=1))
+out2=np.add(out2,np.mean(out5,axis=1))
+out2=np.add(out2,np.mean(out4,axis=1))
+out2=np.add(out2,np.mean(out3,axis=1))
+out2=np.add(out2,np.mean(out20,axis=1))
+out2=np.add(out2,np.mean(out1,axis=1))
+out2end=out2
+out2end=out2end-np.mean(out2end)
+t2=np.linspace(0,len(out2)/fs,len(out2))
+
+#print(out2end.shape)
+plt.figure('out2')
+plt.plot(t2,out2end,'r-')
 plt.grid()
 
-plt.figure('Разность предсказанного...')
-plt.plot(t1,np.subtract(in1,out1))
-plt.grid()
 
+
+in1=ydc
+#print(in1.shape)
+in1=np.resize(in1,in1.shape[0])
+#print(out2end.shape)
+t1=np.linspace(0,len(in1)/fs,len(in1))
+
+plt.figure('Разность после согласованного фильтра и конечного отфильтрованного с помощью ДВП,автоэнокодера,')
+plt.plot(t1,np.subtract(in1,out2end))
+plt.grid()
+print('Mean error')
+print(np.mean(np.subtract(in1,out2end)))
+print()
+#signal after mathed filter
+in1=ydc
 plt.figure('in')
 plt.plot(t1,in1)
 plt.grid()
 
-
-
-print(epochs)
-plt.figure('Сигнал после фильтрации')
-plt.plot(xg[0:1000],ydc[0:1000])
-plt.grid()
 
 axis=0
 ddof=0
@@ -308,8 +308,15 @@ sd = a.std(axis=axis, ddof=ddof)
 x=np.std(a)
 y=np.amax(a)
 p=20*np.log10(y/x)
-print('SNR after filtration')
+print('SNR after  matched filtration')
 print(p)
+print()
+
+s=np.power(ydc,2)
+s2=np.sum(s)
+i=-s2*np.log2(s2)
+print('informativaty after  matched filtration')
+print(i)
 print()
 
 axis=0
@@ -324,8 +331,38 @@ print(' SNR bad signal')
 print(p)
 print()
 
+s=np.power(yb,2)
+s2=np.sum(s)
+i=-s2*np.log2(s2)
+print('informativaty bad signal')
+print(i)
+print()
+
+axis=0
+ddof=0
+a = np.asanyarray(out2end)
+m = a.mean(axis)
+sd = a.std(axis=axis, ddof=ddof)
+x=np.std(a)
+y=np.amax(a)
+p=20*np.log10(y/x)
+print(' SNR after filtration and prediction')
+print(p)
+print()
+
+s=np.power(out2end,2)
+s2=np.sum(s)
+i=-s2*np.log2(s2)
+print('informativaty out2end ')
+print(i)
+print()
+
+
+
+
+
 dydc=np.subtract(yb,ydc)
-plt.figure('Разность...')
+plt.figure('Разность плохого и фильтрованнного согласованным фильтром')
 plt.plot(xg,dydc)
 plt.grid()
 #ydc=scipy.signal.deconvolve(signal=yc,divisor=window)
